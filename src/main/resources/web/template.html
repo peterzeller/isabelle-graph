@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Isabelle Graph</title>
+
+    <style type="text/css">
+        #graph {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #graph svg {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+
+</head>
+<body>
+
+<h1></h1>
+
+<div id="graph">
+
+</div>
+
+<div th:replace="main :: footer"></div>
+<script src="./vivagraph.min.js"></script>
+<script>
+    var graph = Viva.Graph.graph();
+
+    __graph_js__
+
+
+    var graphics = Viva.Graph.View.svgGraphics();
+    graphics.node(function (node) {
+        // This time it's a group of elements: http://www.w3.org/TR/SVG/struct.html#Groups
+        // var ui = Viva.Graph.svg('g');
+        // Create SVG text element with user id as content
+        var svgText = Viva.Graph.svg('text').text(node.id);
+        // ui.append(svgText);
+        // return ui;
+        return svgText;
+    });
+    // graphics.placeNode(function (nodeUI, pos) {
+    //     // 'g' element doesn't have convenient (x,y) attributes, instead
+    //     // we have to deal with transforms: http://www.w3.org/TR/SVG/coords.html#SVGGlobalTransformAttribute
+    //     nodeUI.attr('transform',
+    //         'translate(' +
+    //         (pos.x - nodeSize / 2) + ',' + (pos.y - nodeSize / 2) +
+    //         ')');
+    // });
+
+    // To render an arrow we have to address two problems:
+    //  1. Links should start/stop at node's bounding box, not at the node center.
+    //  2. Render an arrow shape at the end of the link.
+
+    // Rendering arrow shape is achieved by using SVG markers, part of the SVG
+    // standard: http://www.w3.org/TR/SVG/painting.html#Markers
+    var createMarker = function (id) {
+        return Viva.Graph.svg('marker')
+            .attr('id', id)
+            .attr('viewBox', "0 0 10 10")
+            .attr('refX', "50")
+            .attr('refY', "5")
+            .attr('markerUnits', "strokeWidth")
+            .attr('markerWidth', "5")
+            .attr('markerHeight', "10")
+            .attr('fill', 'red')
+            .attr('orient', "auto");
+    };
+    var markerEnd = createMarker('markerEnd');
+    markerEnd.append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z');
+
+    var markerStart = createMarker('markerStart');
+    markerStart.attr('fill', 'blue').attr('refX', "-70");
+    markerStart.append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z');
+
+    // Marker should be defined only once in <defs> child element of root <svg> element:
+    var defs = graphics.getSvgRoot().append('defs');
+    defs.append(markerEnd);
+    defs.append(markerStart);
+
+    var geom = Viva.Graph.geom();
+    var nodeSize = 20;
+
+    graphics.link(function (link) {
+        // Notice the Triangle marker-end attribe:
+        return Viva.Graph.svg('path')
+            .attr('stroke', 'gray')
+            .attr('marker-start', 'url(#markerStart)')
+            .attr('marker-end', 'url(#markerEnd)');
+    }).placeLink(function (linkUI, fromPos, toPos) {
+        // Here we should take care about
+        //  "Links should start/stop at node's bounding box, not at the node center."
+
+        // For rectangular nodes Viva.Graph.geom() provides efficient way to find
+        // an intersection point between segment and rectangle
+        var toNodeSize = nodeSize,
+            fromNodeSize = nodeSize;
+
+        var from = geom.intersectRect(
+            // rectangle:
+            fromPos.x - fromNodeSize / 2, // left
+            fromPos.y - fromNodeSize / 2, // top
+            fromPos.x + fromNodeSize / 2, // right
+            fromPos.y + fromNodeSize / 2, // bottom
+            // segment:
+            fromPos.x, fromPos.y, toPos.x, toPos.y)
+            || fromPos; // if no intersection found - return center of the node
+
+        var to = geom.intersectRect(
+            // rectangle:
+            toPos.x - toNodeSize / 2, // left
+            toPos.y - toNodeSize / 2, // top
+            toPos.x + toNodeSize / 2, // right
+            toPos.y + toNodeSize / 2, // bottom
+            // segment:
+            toPos.x, toPos.y, fromPos.x, fromPos.y)
+            || toPos; // if no intersection found - return center of the node
+
+        var data = 'M' + from.x + ',' + from.y +
+            'L' + to.x + ',' + to.y;
+
+        linkUI.attr("d", data);
+    });
+
+    var layout = Viva.Graph.Layout.forceDirected(graph, {
+        springLength: 500,
+        springCoeff: 0.0005,
+        dragCoeff: 0.002,
+        gravity: -2.2,
+        createSpringForce: function (settings) {
+
+            var options = settings;
+
+            options.minLen = 50;
+            options.maxLen = 1000;
+
+            var api = {
+                /**
+                 * Upsates forces acting on a spring
+                 */
+                update: function (spring) {
+                    var body1 = spring.from;
+                    var body2 = spring.to;
+                    var length = spring.length < 0 ? options.springLength : spring.length;
+                    var dx = body2.pos.x - body1.pos.x;
+                    var dy = body2.pos.y - body1.pos.y;
+                    var r = Math.sqrt(dx * dx + dy * dy);
+
+                    if (r === 0) {
+                        dx = (Math.random() - 0.5) / 50;
+                        dy = (Math.random() - 0.5) / 50;
+                        r = Math.sqrt(dx * dx + dy * dy);
+                    }
+
+                    // var coeff = 0;
+                    // if (r < options.minLen) {
+                    //     coeff = -0.1 / r * spring.weight;
+                    // } else if (r > options.maxLen) {
+                    //     coeff = 0.1 / r * spring.weight;
+                    // }
+                    var d = r - length;
+                    var coeff = ((!spring.coeff || spring.coeff < 0) ? options.springCoeff : spring.coeff) * d / r * spring.weight;
+
+                    body1.force.x += coeff * dx;
+                    body1.force.y += coeff * dy;
+
+                    body2.force.x -= 0.1*coeff * dx;
+                    body2.force.y -= 0.1*coeff * dy;
+                }
+            };
+            return api;
+        }
+    });
+
+
+    var renderer = Viva.Graph.View.renderer(graph, {
+        container: document.getElementById('graph'),
+        graphics: graphics,
+        layout: layout
+    });
+    renderer.run();
+
+</script>
+</body>
+</html>
